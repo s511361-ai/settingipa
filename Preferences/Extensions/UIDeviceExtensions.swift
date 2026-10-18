@@ -1,0 +1,226 @@
+import SwiftUI
+import FoundationModels
+
+extension UIDevice {
+    /// Checks if the device has an accessible MobileGestalt cache.
+    ///
+    /// - Returns: The contents of com.apple.MobileGestalt.plist as a dictionary.
+    static func checkDevice() -> [String: Any]? {
+        let fileURL = URL(fileURLWithPath: "/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist")
+        
+        guard FileManager.default.fileExists(atPath: fileURL.path),
+            let dict = NSDictionary(contentsOf: fileURL) as? [String: Any] else {
+                return nil // Preview/Simulator instance
+        }
+        
+        return dict // Physical device
+    }
+    
+    /// A helper function to better simplify key responses that return `Bool` values.
+    ///
+    /// - Parameters:
+    ///   - key: The key to query.
+    ///   - fallback: The default value to fallback to. Set to false by default.
+    ///
+    /// - Returns: The `key`'s `Bool` response or `fallback`'s value if nil.
+    private static func MGGetBoolAnswer(key: String, fallback: Bool = false) -> Bool {
+        MGHelper.read(key: key).flatMap(Bool.init) ?? fallback
+    }
+    
+    /// A helper function to better simplify key responses that return `String` values.
+    ///
+    /// - Parameters:
+    ///   - key: The key to query.
+    ///   - fallback: The default value to fallback to. Set to "" by default.
+    ///
+    /// - Returns: The `key`'s `String` response or `fallback`'s value if nil.
+    private static func MGGetStringAnswer(key: String, fallback: String = "") -> String {
+        MGHelper.read(key: key) ?? fallback
+    }
+    
+    
+    /// Checks keys with CAMCaptureCapabilities (AVFCapture + MobileGestalt) from CameraUI.
+    ///
+    /// - Parameter key: Capability to query.
+    ///
+    /// - Returns: Boolean value. Defaults to false when a key is not accessible.
+    static func queryCameraCapability(_ key: String) -> Bool {
+        let path = "/System/Library/PrivateFrameworks/CameraUI.framework/CameraUI"
+        guard let handle = dlopen(path, RTLD_NOW) else { return false }
+        defer { dlclose(handle) }
+        
+        guard let cls = NSClassFromString("CAMCaptureCapabilities") as? NSObject.Type else { return false }
+        
+        let selector = NSSelectorFromString("capabilities")
+        guard cls.responds(to: selector) else { return false }
+        guard let capabilities = cls.perform(selector)?.takeUnretainedValue() as? NSObject else { return false }
+        
+        guard let value = capabilities.value(forKey: key) as? Bool else { return false }
+        
+        return value
+    }
+    
+    /// Returns the device storage capacity as an optional String. (e.g. "32 GB", "512 GB", "2 TB")
+    static let storageCapacity: String? = {
+        var diskCapacity = ""
+        var formatted = ""
+        
+        guard let answer = MGHelper.read(key: "uyejyEdaxNWSRQQwHmXz1A") else { // DiskUsage key
+            SettingsLogger.error("Could not get storage capacity information")
+            return "Error"
+        }
+        
+        let cleanedString = answer.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let components = cleanedString.components(separatedBy: ", ")
+        for (index, value) in components.enumerated() {
+            if value.contains("TotalDiskCapacity") {
+                diskCapacity = value.replacing(" ", with: "")
+                formatted = diskCapacity.components(separatedBy: [":"])[1]
+                guard let byteCount = Int64(formatted) else { return nil }
+                return byteCount.formatted(.byteCount(style: .file))
+            }
+        }
+        
+        return nil
+    }()
+
+    /// Returns the ProductType value if the device is not a Simulator instance. Otherwise returns `SIMULATOR_MODEL_IDENTIFIER` value.
+    static let identifier: String = {
+        guard let answer = MGHelper.read(key: "h9jDsbgj7xIVeIQ8S3/X3Q") else { return "Unknown" } // ProductType key
+        return ProcessInfo().environment["SIMULATOR_MODEL_IDENTIFIER"] != nil ? ProcessInfo().environment["SIMULATOR_MODEL_IDENTIFIER"]! : answer
+    }()
+    
+    /// Returns a Bool on whether the device is capable of cellular connectivity.
+    static let CellularTelephonyCapability: Bool = {
+        if let mobileGestalt = UIDevice.checkDevice() {
+            let cacheExtra = mobileGestalt["CacheExtra"] as! [String : AnyObject]
+            return cacheExtra["pB5sZVvnp+QjZQtt2KfQvA"] != nil // BasebandChipset check
+        }
+        
+        // Fallback
+        return UIDevice.iPhone || configuration.forceCellular
+    }()
+    
+    /// Returns a Bool on whether the device is capable of Apple Intelligence.
+    ///
+    /// This uses FoundationModels as an easy public way to check for Apple Intelligence availability.
+    /// - Important: When using preview, the availability will match the host Mac regardless of the simulated device's intelligence capability.
+    static let IntelligenceCapability: Bool = {
+        var model = SystemLanguageModel.default
+        switch model.availability {
+        case .available, .unavailable(.appleIntelligenceNotEnabled), .unavailable(.modelNotReady):
+            return true
+        default:
+            return false
+        }
+    }()
+    
+    /// Returns a Bool on whether the device is a Pro model.
+    static let ProDevice: Bool = {
+        return `marketing-name`.contains("Pro")
+    }()
+    
+    /// Returns a Bool on whether the host is a Simulator instance.
+    static let IsSimulator: Bool = {
+        if let answer = MGHelper.read(key: "ulMliLomP737aAOJ/w/evA") { // IsSimulator key
+            return Bool(answer)! && !configuration.forcePhysical
+        }
+        
+        // Fallback
+        return ProcessInfo().environment["SIMULATOR_MODEL_IDENTIFIER"] != nil && !configuration.forcePhysical
+    }()
+
+    /// Returns a Bool on whether the host is on a simulator/Mac.
+    static let IsSimulated: Bool = {
+        if let answer = MGHelper.read(key: "ulMliLomP737aAOJ/w/evA") { // IsSimulator key
+            return Bool(answer)!
+        }
+
+        // Fallback
+        return ProcessInfo().environment["SIMULATOR_MODEL_IDENTIFIER"] != nil && !configuration.forcePhysical
+    }()
+    
+    // MARK: - Keys
+    
+    /// A Boolean value that indicates whether the device supports Advanced Photographic Styles.
+    static let AdvancedPhotographicStylesCapability = queryCameraCapability("__rearPortraitSemanticStylesSupported")
+    
+    /// Returns a Bool on whether the device is capable of Always Capture Depth Information capability.
+    static let AlwaysCaptureDepthCapability = queryCameraCapability("_continuousZoomSupportedForCinematicMode")
+    
+    /// A Boolean value that indicates whether the device is on an internal install.
+    static let `apple-internal-install` = MGGetBoolAnswer(key: "EqrsVvjcYDdxHBiQmGhAWw")
+    
+    /// The current build of the operating system.
+    static let buildVersion = MGGetStringAnswer(key: "mZfUC7qo4pURNhyMHZ62RQ")
+    
+    /// A Boolean value that indicates whether the device has camera restrictions.
+    static let cameraRestriction = MGGetBoolAnswer(key: "2pxKjejpRGpWvUE+3yp5mQ")
+    
+    /// A Boolean value that indicates whether the device supports Cinematic Mode.
+    static let CinematicModeCapability = !queryCameraCapability("allowPortraitDescriptionOverlay")
+    
+    /// A Boolean value that indicates whether the device supports Always On Display.
+    static let DeviceSupportsAlwaysOnTime = MGGetBoolAnswer(key: "j8/Omm6s1lsmTDFsXjsBfA")
+    
+    /// A Boolean value that indicates whether the device supports Apple Pencil.
+    static let DeviceSupportsApplePencil = MGGetBoolAnswer(key: "yhHcB0iH0d1XzPO/CFd3ow")
+    
+    /// A Boolean value that indicates whether the device supports Stage Manager and Windowed Apps.
+    static let DeviceSupportsEnhancedMultitasking = MGGetBoolAnswer(key: "qeaj75wk3HF4DwQ8qbIi7g")
+    
+    /// A Boolean value that indicates whether the device supports a Hall effect sensor.
+    static let `hall-effect-sensor` = MGGetBoolAnswer(key: "Pop5T2XQdDA60MRyxQJdQ")
+    
+    static let HDRSettingsCapability = queryCameraCapability("_HDRSettingAllowed")
+    
+    /// A Boolean value that indicates whether the device supports HDR image capture.
+    static let `hdr-image-capture` = MGGetBoolAnswer(key: "fh6DnnDGDVZ5kZ9nYn/GrQ")
+    
+    /// A Boolean value that indicates whether the device supports 4K Cinematic Mode.
+    static let HigherResolutionCinematicModeCapability = queryCameraCapability("_actionModeControlSupported") && queryCameraCapability("continuousZoomSupportedForCinematicMode")
+    
+    /// A Boolean value that indicates whether the device has a Home Button.
+    static let HomeButtonCapability = MGGetStringAnswer(key: "JwLB44/jEB8aFDpXQ16Tuw") == "1"
+    
+    /// A Boolean value that indicates whether the device is an iPad.
+    static let iPad = UIDevice.current.userInterfaceIdiom == .pad
+    
+    /// A Boolean value that indicates whether the device is an iPhone.
+    static let iPhone = UIDevice.current.userInterfaceIdiom == .phone
+    
+    /// A Boolean value that indicates whether the device is managed by an organization.
+    static let isSupervised = false
+    
+    /// A Boolean value that indicates whether the device has a LiDAR camera.
+    static let LiDARCapability = queryCameraCapability("_backTimeOfFlightSupported")
+    
+    /// The device model name.
+    static let `marketing-name` = MGGetStringAnswer(key: "Z/dqyWS6OZTRy10UcmUAhw")
+    
+    /// Returns a Bool on whether the device supports macro photography.
+    static let MacroLensCapability = queryCameraCapability("_superWideAutoMacroSupported")
+    
+    /// A Boolean value that indicates whether the device supports Face ID.
+    static let PearlIDCapability = MGGetBoolAnswer(key: "8olRm6C1xqr7AJGpLRnpSw")
+    
+    /// A Boolean value that indicates whether the device supports Photographic Styles.
+    static let PhotographicStylesCapability = !queryCameraCapability("allowPortraitDescriptionOverlay")
+    
+    /// A Boolean value that indicates whether the device supports Reference Mode.
+    static let ReferenceModeCapability = MGGetBoolAnswer(key: "TqtrpIdOXIIlhOraMmq/pQ") && LiDARCapability
+    
+    /// A Boolean value that indicates whether the device is a security research device.
+    static let ResearchFuse = MGGetBoolAnswer(key: "XYlJKKkj2hztRP1NWWnhlw")
+    
+    /// A Boolean value that indicates whether the device has an Action Button.
+    static let RingerButtonCapability = MGGetBoolAnswer(key: "cT44WE1EohiwRzhsZ8xEsw")
+    
+    /// A Boolean value that indicates whether the device is capable of HDR video capture.
+    static let VariableFramerateVideo = queryCameraCapability("_variableFramerateVideoSupported")
+    
+    // MARK: - Paths
+    static let RuntimePath = UIDevice.IsSimulated
+        ? "/Library/Developer/CoreSimulator/Volumes/iOS_\(UIDevice.buildVersion)/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS \(UIDevice.current.systemVersion).simruntime/Contents/Resources/RuntimeRoot"
+        : ""
+}
