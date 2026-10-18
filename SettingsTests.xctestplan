@@ -1,0 +1,33 @@
+{
+  "configurations" : [
+    {
+      "id" : "C027E0A7-80C8-4C23-9509-03143B603456",
+      "name" : "Default Configuration",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "testExecutionOrdering" : "random",
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:Preferences.xcodeproj",
+        "identifier" : "83937B902D8235310049AB0E",
+        "name" : "SettingsTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Preferences.xcodeproj",
+        "identifier" : "83937B7D2D8230A20049AB0E",
+        "name" : "SettingsTopLevelPanesRenderTests"
+      }
+    }
+  ],
+  "version" : 1
+}
